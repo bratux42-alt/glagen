@@ -6,4 +6,5 @@ reportlab
 matplotlib
 numpy
 qrcode[pil]
+segno
 Pillow
