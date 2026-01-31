@@ -1,0 +1,9 @@
+aiogram
+python-docx
+python-pptx
+openpyxl
+reportlab
+matplotlib
+numpy
+qrcode[pil]
+Pillow
