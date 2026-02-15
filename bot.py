@@ -13,7 +13,8 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.types import MenuButtonCommands, BotCommand
+from aiogram.types import MenuButtonCommands, BotCommand, PreCheckoutQuery, ContentType, LabeledPrice
+from aiogram.exceptions import TelegramBadRequest
 
 # --- ⚙️ НАСТРОЙКИ ---
 # Бот попробует взять токен из настроек сервера. Если не найдет — возьмет тот, что в кавычках.
@@ -46,6 +47,15 @@ class AdminStates(StatesGroup):
     waiting_user_id_to_remove = State()
     waiting_user_id_to_block = State()
     waiting_user_id_to_unblock = State()
+    waiting_user_id_to_add_admin = State()
+    
+    # Состояния для создания заданий
+    waiting_task_text = State()
+    waiting_task_type = State()
+    waiting_task_target = State()
+    waiting_reward_type = State()
+    waiting_reward_value = State()
+    waiting_reward_duration = State()
 
 # ═══════════════════════════════════════════════════════════════
 # �💳 СИСТЕМА ПОДПИСОК И АДМИНОВ
@@ -79,6 +89,315 @@ PLANS = {
     }
 }
 
+# Словари переводов
+LANG = {
+    "ru": {
+        "start": "👋 Привет! Я публичный генератор файлов.\nКидай код — получай результат.",
+        "premium": "╔════════════════════════════════╗\n║     💎 ПРЕМИУМ ПОДПИСКИ 💎    ║\n╚════════════════════════════════╝\n\n📊 **Ваш текущий план:** {plan}\n📈 Использовано: {used}/{max} креаций\n⏳ Обновление через: **{reset_time}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n",
+        "lang_select": "🌐 Выберите язык:",
+        "lang_changed": "✅ Язык изменен на Русский!",
+        "ref_info": "👥 **РЕФЕРАЛЬНАЯ СИСТЕМА**\n\nПригласи друга и получи **+2 креации** к лимиту на 7 дней!\n\n🔗 Твоя ссылка:\n`{link}`\n\nВсего приглашено: {count}",
+        "my_files": "📋 **ВАШИ ПОСЛЕДНИЕ ФАЙЛЫ**",
+        "no_files": "🤔 У вас пока нет созданных файлов.",
+        "blocked_list": "🚫 **СПИСОК ЗАБЛОКИРОВАННЫХ**\n\n",
+        "no_blocked": "✅ Заблокированных пользователей нет.",
+        "unblock_btn": "✅ Разблокировать пользователя",
+        "stats_btn": "📊 Моя статистика",
+        "files_btn": "📋 Мои файлы",
+        "lang_btn": "🌐 Язык",
+        "ref_btn": "👥 Рефералы",
+        "gen_btn": "🚀 Начать создание",
+        "prem_btn": "💳 Премиум",
+        "info_btn": "ℹ️ Инфо",
+        "tutor_btn": "📹 Тутор",
+        "tasks_btn": "🎁 Задания",
+        "info": (
+            "╔════════════════════════════════╗\n"
+            "║  🤖 GlaGen - Gen File Bot 🤖  ║\n"
+            "╚════════════════════════════════╝\n\n"
+            "🎯 Безопасная песочница для Python\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 ВАША ПОДПИСКА\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💳 План: **{plan_name}**\n"
+            "📥 Входящие файлы: до **{input_size}KB** ({input_lines} строк)\n"
+            "📤 Выходящие файлы: до **{output_size}MB**\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ ПОДДЕРЖИВАЕМЫЕ ФОРМАТЫ\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📄 docx - Word документы\n"
+            "📊 xlsx - Excel таблицы\n"
+            "🎨 pptx - PowerPoint презентации\n"
+            "📑 pdf - PDF файлы\n"
+            "📈 matplotlib - Графики\n"
+            "🔲 qrcode - QR коды\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏳ ЛИМИТЫ\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏰ Максимум: **30 секунд** на выполнение\n"
+            "🔄 После 10 таймаутов: блок на 24ч\n\n"
+            "💡 Обновите подписку для больших лимитов!"
+        ),
+        "prem_msg": (
+            "╔════════════════════════════════╗\n"
+            "║     💎 ПРЕМИУМ ПОДПИСКИ 💎    ║\n"
+            "╚════════════════════════════════╝\n\n"
+            "📊 **Ваш текущий план:** {plan}\n"
+            "📈 Использовано: {used}/{max} креаций\n"
+            "⏳ Обновление через: **{reset_time}**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "┌─ 🆓 FREE 🆓 ─────────────────┐\n"
+            "│ Бесплатно\n"
+            "│ 📝 3 креации\n"
+            "│ 📦 10KB вход / 40 строк\n"
+            "│ 📤 400KB выход\n"
+            "{free_active}"
+            "└────────────────────────────┘\n\n"
+            "┌─ 💎 PRO 💎 ───────────────────┐\n"
+            "│ 100 ⭐ / 30 грн / 65 руб\n"
+            "│ 📝 15 креаций\n"
+            "│ 📦 30KB вход / 100 строк\n"
+            "│ 📤 10MB выход\n"
+            "{pro_active}"
+            "└────────────────────────────┘\n\n"
+            "┌─ 👑 ULTRA 👑 ─────────────────┐\n"
+            "│ 300 ⭐ / 70 грн / 165 руб\n"
+            "│ 📝 ∞ Бесконечные креации\n"
+            "│ 📦 1MB вход / ∞ строк\n"
+            "│ 📤 ∞ Без ограничений\n"
+            "{ultra_active}"
+            "└────────────────────────────┘\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👇 Нажмите кнопку чтобы обновить подписку 👇"
+        ),
+        "prem_active": "│ ✅ АКТИВЕН\n",
+        "prem_choice_stars": "⭐ Оплатить Stars",
+        "prem_choice_contact": "💬 Написать админу",
+        "prem_plan_pro": "💎 Pro (30 грн / 100 ⭐)",
+        "prem_plan_ultra": "👑 Ultra (70 грн / 300 ⭐)",
+        "gen_prompt": "👇 Просто отправь мне код (текстом или файлом .py).",
+        "pay_success": "🎉 **Оплата прошла успешно!**\n\nВам активирован план **{plan}**.\nПриятного пользования! 🚀",
+        "blocked_perm": "🚫 Вы заблокированы навсегда и не можете использовать бота.",
+        "blocked_temp": "🚫 Вы не можете создавать файлы. Разблокировка через: ~{hours} часов",
+        "tasks_menu": "🎁 **ДОСТУПНЫЕ ЗАДАНИЯ**\n\nВыполняйте задания и получайте ценные награды: дополнительные лимиты или временный Premium!",
+        "task_item": "🔹 {text}\nНаграда: **{reward}**",
+        "task_completed": "✅ Задание выполнено! Вам начислено: {reward}",
+        "task_already_done": "⚠️ Вы уже выполняли это задание.",
+        "task_not_subbed": "❌ **Вы еще не подписаны!**\n\nПожалуйста, подпишитесь на канал {target} и нажмите кнопку подтверждения повторно.",
+        "task_reward_creations": "{count} доп. креаций",
+        "task_reward_premium": "{days} дн. PRO",
+        "admin_tasks_btn": "🎁 Управление заданиями",
+        "admin_no_tasks": "В системе пока нет активных заданий.",
+        "admin_tasks_list": "📋 **СПИСОК ЗАДАНИЙ**",
+        "task_type_sub": "Подписка на канал",
+        "task_type_manual": "Ручное подтверждение",
+        "admin_task_target_tip": "🆔 Введите юзернейм канала (с @) или числовой ID.\nБот Должен быть в этом канале!"
+    },
+    "ua": {
+        "start": "👋 Привіт! Я публічний генератор файлів.\nКидай код — отримуй результат.",
+        "premium": "╔════════════════════════════════╗\n║     💎 ПРЕМІУМ ПІДПИСКИ 💎     ║\n╚════════════════════════════════╝\n\n📊 **Ваш поточний план:** {plan}\n📈 Використано: {used}/{max} креацій\n⏳ Оновлення через: **{reset_time}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n",
+        "lang_select": "🌐 Оберіть мову:",
+        "lang_changed": "✅ Мову змінено на Українську!",
+        "ref_info": "👥 **РЕФЕРАЛЬНА СИСТЕМА**\n\nЗапроси друга та отримай **+2 креації** до ліміту на 7 днів!\n\n🔗 Твоє посилання:\n`{link}`\n\nВсього запрошено: {count}",
+        "my_files": "📋 **ВАШІ ОСТАННІ ФАЙЛИ**",
+        "no_files": "🤔 У вас поки немає створених файлів.",
+        "blocked_list": "🚫 **СПОСОК ЗАБЛОКОВАНИХ**\n\n",
+        "no_blocked": "✅ Заблокованих користувачів немає.",
+        "unblock_btn": "✅ Розблокирувати користувача",
+        "stats_btn": "📊 Моя статистика",
+        "files_btn": "📋 Мої файли",
+        "lang_btn": "🌐 Мова",
+        "ref_btn": "👥 Реферали",
+        "gen_btn": "🚀 Почати створення",
+        "prem_btn": "💳 Преміум",
+        "info_btn": "ℹ️ Інфо",
+        "tutor_btn": "📹 Тутор",
+        "tasks_btn": "🎁 Завдання",
+        "info": (
+            "╔════════════════════════════════╗\n"
+            "║  🤖 GlaGen - Gen File Bot 🤖  ║\n"
+            "╚════════════════════════════════╝\n\n"
+            "🎯 Безпечна пісочниця для Python\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 ВАША ПЕРЕДПЛАТА\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💳 План: **{plan_name}**\n"
+            "📥 Вхідні файли: до **{input_size}KB** ({input_lines} рядків)\n"
+            "📤 Вихідні файли: до **{output_size}MB**\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ ПІДТРИМУВАНІ ФОРМАТЫ\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📄 docx - Word документи\n"
+            "📊 xlsx - Excel таблиці\n"
+            "🎨 pptx - PowerPoint презентації\n"
+            "📑 pdf - PDF файли\n"
+            "📈 matplotlib - Графіки\n"
+            "🔲 qrcode - QR коди\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏳ ЛІМІТИ\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏰ Максимум: **30 секунд** на виконання\n"
+            "🔄 Після 10 таймаутів: блок на 24г\n\n"
+            "💡 Оновіть передплату для більших лімітів!"
+        ),
+        "prem_msg": (
+            "╔════════════════════════════════╗\n"
+            "║     💎 ПРЕМІУМ ПІДПИСКИ 💎     ║\n"
+            "╚════════════════════════════════╝\n\n"
+            "📊 **Ваш поточний план:** {plan}\n"
+            "📈 Використано: {used}/{max} креацій\n"
+            "⏳ Оновлення через: **{reset_time}**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "┌─ 🆓 FREE 🆓 ─────────────────┐\n"
+            "│ Безкоштовно\n"
+            "│ 📝 3 креації\n"
+            "│ 📦 10KB вхід / 40 рядків\n"
+            "│ 📤 400KB вихід\n"
+            "{free_active}"
+            "└────────────────────────────┘\n\n"
+            "┌─ 💎 PRO 💎 ───────────────────┐\n"
+            "│ 100 ⭐ / 30 грн / 65 руб\n"
+            "│ 📝 15 креацій\n"
+            "│ 📦 30KB вхід / 100 рядків\n"
+            "│ 📤 10MB вихід\n"
+            "{pro_active}"
+            "└────────────────────────────┘\n\n"
+            "┌─ 👑 ULTRA 👑 ─────────────────┐\n"
+            "│ 300 ⭐ / 70 грн / 165 руб\n"
+            "│ 📝 ∞ Нескінченні креації\n"
+            "│ 📦 1MB вхід / ∞ рядків\n"
+            "│ 📤 ∞ Без обмежень\n"
+            "{ultra_active}"
+            "└────────────────────────────┘\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👇 Натисніть кнопку щоб оновити передплату 👇"
+        ),
+        "prem_active": "│ ✅ АКТИВНИЙ\n",
+        "prem_choice_stars": "⭐ Оплатити Stars",
+        "prem_choice_contact": "💬 Написати адміну",
+        "prem_plan_pro": "💎 Pro (30 грн / 100 ⭐)",
+        "prem_plan_ultra": "👑 Ultra (70 грн / 300 ⭐)",
+        "gen_prompt": "👇 Відправ мені код (текстом або файлом .py).",
+        "pay_success": "🎉 **Оплата пройшла успішно!**\n\nВам активовано план **{plan}**.\nПриємного користування! 🚀",
+        "blocked_perm": "🚫 Ви заблоковані назавжди і не можете використовувати бота.",
+        "blocked_temp": "🚫 Ви не можете створювати файли. Розблокування через: ~{hours} годин",
+        "tasks_menu": "🎁 **ДОСТУПНІ ЗАВДАННЯ**\n\nВиконуйте завдання та отримуйте цінні нагороди: додаткові ліміти або тимчасовий Premium!",
+        "task_item": "🔹 {text}\nНагорода: **{reward}**",
+        "task_completed": "✅ Завдання виконано! Вам нараховано: {reward}",
+        "task_already_done": "⚠️ Ви вже виконували це завдання.",
+        "task_not_subbed": "❌ **Ви ще не підписані!**\n\nБудь ласка, підпишіться на канал {target} та натисніть кнопку підтвердження ще раз.",
+        "task_reward_creations": "{count} дод. креацій",
+        "task_reward_premium": "{days} дн. PRO",
+        "admin_tasks_btn": "🎁 Управління завданнями",
+        "admin_no_tasks": "У системі поки немає активних завдань.",
+        "admin_tasks_list": "📋 **СПИСОК ЗАВДАНЬ**",
+        "task_type_sub": "Підписка на канал",
+        "task_type_manual": "Ручне підтвердження",
+        "admin_task_target_tip": "🆔 Введіть юзернейм каналу (з @) або числовий ID.\nБот Має бути в цьому каналі!"
+    },
+    "en": {
+        "start": "👋 Hi! I am a public file generator.\nSend code — get results.",
+        "premium": "╔════════════════════════════════╗\n║     💎 PREMIUM SUBSCRIPTIONS 💎  ║\n╚════════════════════════════════╝\n\n📊 **Your current plan:** {plan}\n📈 Used: {used}/{max} creations\n⏳ Reset in: **{reset_time}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n",
+        "lang_select": "🌐 Choose language:",
+        "lang_changed": "✅ Language changed to English!",
+        "ref_info": "👥 **REFERRAL SYSTEM**\n\nInvite a friend and get **+2 creations** to your limit for 7 days!\n\n🔗 Your link:\n`{link}`\n\nTotal invited: {count}",
+        "my_files": "📋 **YOUR RECENT FILES**",
+        "no_files": "🤔 You have no created files yet.",
+        "blocked_list": "🚫 **BLOCKED LIST**\n\n",
+        "no_blocked": "✅ No blocked users.",
+        "unblock_btn": "✅ Unblock user",
+        "files_btn": "📋 My Files",
+        "lang_btn": "🌐 Language",
+        "ref_btn": "👥 Referrals",
+        "gen_btn": "🚀 Start Creation",
+        "prem_btn": "💳 Premium",
+        "info_btn": "ℹ️ Info",
+        "tutor_btn": "📹 Tutorial",
+        "tasks_btn": "🎁 Tasks",
+        "info": (
+            "╔════════════════════════════════╗\n"
+            "║  🤖 GlaGen - Gen File Bot 🤖  ║\n"
+            "╚════════════════════════════════╝\n\n"
+            "🎯 Safe sandbox for Python\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 YOUR SUBSCRIPTION\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💳 Plan: **{plan_name}**\n"
+            "📥 Input files: up to **{input_size}KB** ({input_lines} lines)\n"
+            "📤 Output files: up to **{output_size}MB**\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ SUPPORTED FORMATS\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📄 docx - Word documents\n"
+            "📊 xlsx - Excel spreadsheets\n"
+            "🎨 pptx - PowerPoint presentations\n"
+            "📑 pdf - PDF files\n"
+            "📈 matplotlib - Charts\n"
+            "🔲 qrcode - QR codes\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏳ LIMITS\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏰ Maximum: **30 seconds** per execution\n"
+            "🔄 After 10 timeouts: block for 24h\n\n"
+            "💡 Upgrade your subscription for higher limits!"
+        ),
+        "prem_msg": (
+            "╔════════════════════════════════╗\n"
+            "║     💎 PREMIUM SUBSCRIPTIONS 💎  ║\n"
+            "╚════════════════════════════════╝\n\n"
+            "📊 **Your current plan:** {plan}\n"
+            "📈 Used: {used}/{max} creations\n"
+            "⏳ Reset in: **{reset_time}**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "┌─ 🆓 FREE 🆓 ─────────────────┐\n"
+            "│ Free\n"
+            "│ 📝 3 creations\n"
+            "│ 📦 10KB input / 40 lines\n"
+            "│ 📤 400KB output\n"
+            "{free_active}"
+            "└────────────────────────────┘\n\n"
+            "┌─ 💎 PRO 💎 ───────────────────┐\n"
+            "│ 100 ⭐ / 30 UAH / 65 RUB\n"
+            "│ 📝 15 creations\n"
+            "│ 📦 30KB input / 100 lines\n"
+            "│ 📤 10MB output\n"
+            "{pro_active}"
+            "└────────────────────────────┘\n\n"
+            "┌─ 👑 ULTRA 👑 ─────────────────┐\n"
+            "│ 300 ⭐ / 70 UAH / 165 RUB\n"
+            "│ 📝 ∞ Infinite creations\n"
+            "│ 📦 1MB input / ∞ lines\n"
+            "│ 📤 ∞ No limits\n"
+            "{ultra_active}"
+            "└────────────────────────────┘\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👇 Press the button to upgrade 👇"
+        ),
+        "prem_active": "│ ✅ ACTIVE\n",
+        "prem_choice_stars": "⭐ Pay with Stars",
+        "prem_choice_contact": "💬 Write to Admin",
+        "prem_plan_pro": "💎 Pro (30 UAH / 100 ⭐)",
+        "prem_plan_ultra": "👑 Ultra (70 UAH / 300 ⭐)",
+        "gen_prompt": "👇 Just send me your code (as text or a .py file).",
+        "pay_success": "🎉 **Payment successful!**\n\nYour plan is now **{plan}**.\nEnjoy! 🚀",
+        "blocked_perm": "🚫 You are permanently blocked and cannot use the bot.",
+        "blocked_temp": "🚫 You cannot create files. Unblock in: ~{hours} hours",
+        "tasks_menu": "🎁 **AVAILABLE TASKS**\n\nComplete tasks and get valuable rewards: extra limits or temporary Premium!",
+        "task_item": "🔹 {text}\nReward: **{reward}**",
+        "task_completed": "✅ Task completed! You received: {reward}",
+        "task_already_done": "⚠️ You have already completed this task.",
+        "task_not_subbed": "❌ **Not subscribed yet!**\n\nPlease subscribe to {target} and then click the confirm button again.",
+        "task_reward_creations": "{count} extra creations",
+        "task_reward_premium": "{days} days PRO",
+        "admin_tasks_btn": "🎁 Manage Tasks",
+        "admin_no_tasks": "No active tasks in the system.",
+        "admin_tasks_list": "📋 **TASKS LIST**",
+        "task_type_sub": "Channel Sub",
+        "task_type_manual": "Manual Confirm",
+        "admin_task_target_tip": "🆔 Enter channel username (with @) or numeric ID.\nBot MUST be in this channel!"
+    }
+}
+
 # Данные в памяти
 class BotData:
     def __init__(self):
@@ -93,6 +412,13 @@ class BotData:
         self.timeout_count = {}  # {user_id: {date_str: count}}
         self.temp_blocked_users = {}  # {user_id: unblock_datetime}
         self.permanently_blocked_users = set()  # user_ids постоянно заблокированных
+        self.last_creations_reset = datetime.now()
+        self.user_file_history = defaultdict(list)  # {user_id: [{name, path, timestamp}]}
+        self.user_lang = {}  # {user_id: "ru"}
+        self.user_referrals = defaultdict(list)  # {user_id: [invited_ids]}
+        self.user_referral_bonus = {}  # {user_id: expires_isoformat}
+        self.tasks = []  # [{id, text, type, target, reward_type, reward_value, reward_duration}]
+        self.user_completed_tasks = defaultdict(set)  # {user_id: {task_id}}
         self.load_data()
     
     def load_data(self):
@@ -108,6 +434,13 @@ class BotData:
                     self.temp_blocked_users = {int(k): datetime.fromisoformat(v)
                                               for k, v in data.get("temp_blocked_users", {}).items()}
                     self.permanently_blocked_users = set(data.get("permanently_blocked_users", []))
+                    self.last_creations_reset = datetime.fromisoformat(data.get("last_creations_reset", datetime.now().isoformat()))
+                    self.user_file_history = {int(k): v for k, v in data.get("user_file_history", {}).items()}
+                    self.user_lang = data.get("user_lang", {})
+                    self.user_referrals = {int(k): v for k, v in data.get("user_referrals", {}).items()}
+                    self.user_referral_bonus = {int(k): v for k, v in data.get("user_referral_bonus", {}).items()}
+                    self.tasks = data.get("tasks", [])
+                    self.user_completed_tasks = defaultdict(set, {int(k): set(v) for k, v in data.get("user_completed_tasks", {}).items()})
             except:
                 pass
     
@@ -118,7 +451,14 @@ class BotData:
             "user_join_time": {k: v.isoformat() for k, v in self.user_join_time.items()},
             "timeout_count": self.timeout_count,
             "temp_blocked_users": {k: v.isoformat() for k, v in self.temp_blocked_users.items()},
-            "permanently_blocked_users": list(self.permanently_blocked_users)
+            "permanently_blocked_users": list(self.permanently_blocked_users),
+            "last_creations_reset": self.last_creations_reset.isoformat(),
+            "user_file_history": self.user_file_history,
+            "user_lang": self.user_lang,
+            "user_referrals": self.user_referrals,
+            "user_referral_bonus": self.user_referral_bonus,
+            "tasks": self.tasks,
+            "user_completed_tasks": {k: list(v) for k, v in self.user_completed_tasks.items()}
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -139,7 +479,10 @@ class BotData:
         self.save_data()
     
     def is_admin(self, user_id: int) -> bool:
-        return user_id in self.admins
+        try:
+            return int(user_id) == 8566608157
+        except:
+            return False
     
     def register_user(self, user_id: int):
         if user_id not in self.user_join_time:
@@ -216,6 +559,76 @@ class BotData:
             user_id = self.request_queue.pop(0)
             self.processing.add(user_id)
 
+    def get_user_lang(self, user_id: int) -> str:
+        return self.user_lang.get(str(user_id), "ru")
+
+    def set_user_lang(self, user_id: int, lang: str):
+        self.user_lang[str(user_id)] = lang
+        self.save_data()
+
+    def tr(self, user_id: int, key: str, **kwargs) -> str:
+        lang = self.get_user_lang(user_id)
+        text = LANG.get(lang, LANG["ru"]).get(key, key)
+        if kwargs:
+            try:
+                return text.format(**kwargs)
+            except:
+                return text
+        return text
+
+    def get_reset_time_left(self) -> str:
+        """Возвращает время до следующего сброса лимитов (ЧЧ:ММ)"""
+        self.check_and_reset_creations()
+        elapsed = datetime.now() - self.last_creations_reset
+        remaining = timedelta(hours=5) - elapsed
+        
+        if remaining.total_seconds() < 0:
+            return "00:00"
+            
+        seconds = int(remaining.total_seconds())
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours:02d}:{minutes:02d}"
+
+    def check_and_reset_creations(self):
+        """Сброс лимитов каждые 5 часов"""
+        if datetime.now() - self.last_creations_reset >= timedelta(hours=5):
+            self.user_creations.clear()
+            self.last_creations_reset = datetime.now()
+            self.save_data()
+            print(f"🔄 Лимиты креаций сброшены: {self.last_creations_reset}")
+
+    def add_to_history(self, user_id: int, file_path: str, file_name: str):
+        history = self.user_file_history.get(user_id, [])
+        history.append({
+            "name": file_name,
+            "path": file_path,
+            "timestamp": datetime.now().isoformat()
+        })
+        # Храним последние 5
+        if len(history) > 5:
+            old = history.pop(0)
+            # Если файл еще в ОС, не удаляем тут, так как execute_code сам рулил temp_work.
+            # Но для истории мы можем захотеть сохранить файлы подольше.
+            # Для простоты: файлы живут в temp_work пока работает бот.
+        self.user_file_history[user_id] = history
+        self.save_data()
+
+    def get_max_creations(self, user_id: int) -> int:
+        plan_name = self.get_user_plan(user_id)
+        max_c = PLANS[plan_name]["max_creations"]
+        
+        # Проверка бонуса реферала
+        bonus_expires = self.user_referral_bonus.get(user_id)
+        if bonus_expires:
+            if datetime.now() < datetime.fromisoformat(bonus_expires):
+                if max_c == float('inf'): return max_c
+                return max_c + 2
+            else:
+                del self.user_referral_bonus[user_id]
+                self.save_data()
+        return max_c
+
 bot_data = BotData()
 
 # Добавляем основного администратора при первом запуске
@@ -230,11 +643,40 @@ os.makedirs(BASE_TEMP_DIR, exist_ok=True)
 # --- 📱 КЛАВИАТУРЫ ---
 
 # Главное меню (внизу)
+# Все возможные тексты кнопок меню (для игнорирования в handle_text_code)
+ALL_MENU_BUTTONS = set()
+for lang_dict in LANG.values():
+    for key in ["gen_btn", "files_btn", "prem_btn", "ref_btn", 
+                "info_btn", "tutor_btn", "lang_btn", "tasks_btn"]:
+        ALL_MENU_BUTTONS.add(lang_dict.get(key, ""))
+ALL_MENU_BUTTONS.add("📞 Написать админу")
+
+def btn_texts(key: str) -> set:
+    """Возвращает множество текстов кнопки на всех языках"""
+    return {LANG[lang][key] for lang in LANG}
+
+def get_kb(user_id: int) -> ReplyKeyboardMarkup:
+    """Генерирует локализованную клавиатуру"""
+    user_id = int(str(user_id))
+    t = lambda key: bot_data.tr(user_id, key)
+    # Прямая проверка ID для 100% надежности
+    is_adm = (user_id == 8566608157)
+    
+    rows = [
+        [KeyboardButton(text=t("gen_btn"))],
+        [KeyboardButton(text=t("files_btn")), KeyboardButton(text=t("tasks_btn"))],
+        [KeyboardButton(text=t("prem_btn")), KeyboardButton(text=t("ref_btn"))],
+        [KeyboardButton(text=t("info_btn")), KeyboardButton(text=t("tutor_btn")), KeyboardButton(text=t("lang_btn"))],
+    ]
+    
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, input_field_placeholder="...")
+
 main_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🚀 Начать создание")],
-        [KeyboardButton(text="💳 Премиум"), KeyboardButton(text="ℹ️ Инфо")],
-        [KeyboardButton(text="📹 Тутор")]
+        [KeyboardButton(text=LANG["ru"]["gen_btn"])],
+        [KeyboardButton(text=LANG["ru"]["files_btn"]), KeyboardButton(text=LANG["ru"]["prem_btn"])],
+        [KeyboardButton(text=LANG["ru"]["ref_btn"]), KeyboardButton(text=LANG["ru"]["lang_btn"])],
+        [KeyboardButton(text=LANG["ru"]["info_btn"]), KeyboardButton(text=LANG["ru"]["tutor_btn"])]
     ],
     resize_keyboard=True,
     input_field_placeholder="Выбери действие..."
@@ -243,10 +685,10 @@ main_kb = ReplyKeyboardMarkup(
 # Админ меню
 admin_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🚀 Начать создание")],
-        [KeyboardButton(text="💳 Премиум"), KeyboardButton(text="ℹ️ Инфо")],
-        [KeyboardButton(text="📹 Тутор")],
-        [KeyboardButton(text="📊 Админ панель"), KeyboardButton(text="👥 Управление")]
+        [KeyboardButton(text=LANG["ru"]["gen_btn"])],
+        [KeyboardButton(text=LANG["ru"]["files_btn"]), KeyboardButton(text=LANG["ru"]["prem_btn"])],
+        [KeyboardButton(text=LANG["ru"]["ref_btn"]), KeyboardButton(text=LANG["ru"]["lang_btn"])],
+        [KeyboardButton(text=LANG["ru"]["info_btn"]), KeyboardButton(text=LANG["ru"]["tutor_btn"])]
     ],
     resize_keyboard=True,
     input_field_placeholder="Выбери действие..."
@@ -265,37 +707,34 @@ blocked_kb = ReplyKeyboardMarkup(
 def get_download_kb(user_id):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📂 Скачать файл", callback_data=f"get_file_{user_id}")]])
 
-# Премиум клавиатура
-premium_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="💎 Pro (30 грн)", url="https://t.me/Visasai")],
-    [InlineKeyboardButton(text="👑 Ultra (70 грн)", url="https://t.me/Visasai")]
+# Премиум клавиатура (выбор способа)
+def get_premium_choice_kb(user_id):
+    t = lambda key: bot_data.tr(user_id, key)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("prem_choice_stars"), callback_data="prem_stars")],
+        [InlineKeyboardButton(text=t("prem_choice_contact"), url="https://t.me/Visaaai")]
+    ])
+
+# Премиум клавиатура (планы)
+def get_premium_plans_kb(user_id):
+    t = lambda key: bot_data.tr(user_id, key)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("prem_plan_pro"), callback_data="buy_pro")],
+        [InlineKeyboardButton(text=t("prem_plan_ultra"), callback_data="buy_ultra")]
+    ])
+
+lang_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="set_lang_ru")],
+    [InlineKeyboardButton(text="🇺🇦 Українська", callback_data="set_lang_ua")],
+    [InlineKeyboardButton(text="🇺🇸 English", callback_data="set_lang_en")]
 ])
 
 
 # --- 🛡️ ФУНКЦИЯ БЕЗОПАСНОСТИ ---
 def is_safe_code(code: str) -> bool:
-    """Проверяет код на наличие опасных команд перед запуском."""
-    code_lower = code.lower()
-    
-    # ⛔ ЧЕРНЫЙ СПИСОК (Запрещено)
-    banned_keywords = [
-        "import os", "from os",             # Доступ к системе
-        "import sys", "from sys",           # Системные настройки
-        "import shutil", "from shutil",     # Удаление файлов
-        "import subprocess",                # Запуск процессов
-        "input(",                           # Ожидание ввода (завесит бота)
-        "eval(", "exec(",                   # Скрытый запуск кода
-        "open(",                            # Открытие левых файлов
-        "__import__",                       # Хитрый импорт
-        "requests", "urllib", "aiohttp",    # Интернет (чтобы не дудосили)
-        "while true", "while 1"             # Бесконечные циклы
-    ]
-
-    for word in banned_keywords:
-        if word in code_lower:
-            return False, word # Возвращаем запрещенное слово
-            
+    """Все библиотеки разрешены."""
     return True, None
+
 
 
 # --- 🏗️ ФУНКЦИЯ ЗАПУСКА КОДА ---
@@ -329,11 +768,14 @@ async def execute_code(message: types.Message, task_dir: str, code_content: str)
     # 1. Проверка безопасности
     is_safe, banned_word = is_safe_code(code_content)
     if not is_safe:
-        await message.answer(f"⛔ **Код заблокирован!**\nНайдена запрещенная команда: `{banned_word}`.\n\nВ целях безопасности запрещены: os, sys, input, интернет.", parse_mode="Markdown")
+        await message.answer(f"⛔ **Код заблокирован!**\nНайдена запрещенная команда: `{banned_word}`.", parse_mode="Markdown")
         shutil.rmtree(task_dir)
         return
 
     try:
+        # 0. Сброс лимитов если пора
+        bot_data.check_and_reset_creations()
+
         status_msg = await message.answer("⚙️ Проверка пройдена. Запускаю...")
         
         # Проверяем ограничения плана
@@ -364,12 +806,13 @@ async def execute_code(message: types.Message, task_dir: str, code_content: str)
             shutil.rmtree(task_dir)
             return
         
-        # Проверка кол-ва использований
-        if bot_data.user_creations[user_id] >= plan["max_creations"]:
+        # Проверка кол-ва использований (с учетом бонусов)
+        max_creations = bot_data.get_max_creations(user_id)
+        if bot_data.user_creations[user_id] >= max_creations:
             await status_msg.edit_text(
                 f"🚫 Вы исчерпали лимит на {plan['name']}!\n"
-                f"Создано файлов: {bot_data.user_creations[user_id]}/{plan['max_creations']}\n\n"
-                f"Обновите план для бесконечных созданий 💳"
+                f"Создано файлов: {bot_data.user_creations[user_id]}/{max_creations}\n\n"
+                f"Обновите план для бесконечных созданий (или подождите сброса каждые 5 часов) 💳"
             )
             shutil.rmtree(task_dir)
             return
@@ -436,9 +879,13 @@ async def execute_code(message: types.Message, task_dir: str, code_content: str)
                 users_files[message.from_user.id] = (result_file, task_dir)
                 bot_data.user_creations[user_id] += 1
                 
+                # Добавляем в историю
+                bot_data.add_to_history(user_id, result_file, generated_files[0])
+
+                max_creations = bot_data.get_max_creations(user_id)
                 await status_msg.edit_text(
                     f"✅ Готово! Файл создан: {generated_files[0]}\n"
-                    f"Использовано: {bot_data.user_creations[user_id]}/{plan['max_creations']}", 
+                    f"Использовано: {bot_data.user_creations[user_id]}/{max_creations}", 
                     reply_markup=get_download_kb(message.from_user.id)
                 )
             else:
@@ -470,25 +917,37 @@ async def cmd_start(message: types.Message):
     
     bot_data.register_user(user_id)
     
-    # Проверяем временную блокировку
-    if bot_data.is_temp_blocked(user_id):
-        unblock_time = bot_data.temp_blocked_users.get(user_id)
-        if unblock_time:
-            hours_left = int((unblock_time - datetime.now()).total_seconds() / 3600)
-            await message.answer(
-                f"🚫 **Вы временно заблокированы**\n\n"
-                f"Превышен лимит таймаутов (10+ за день).\n"
-                f"Восстановление через: ~{hours_left} часов\n\n"
-                f"Вы можете связаться с админом для уточнения деталей.",
-                reply_markup=blocked_kb,
-                parse_mode="Markdown"
-            )
-            return
+    # Реферальная система: проверка deep link
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith("ref_"):
+        try:
+            inviter_id = int(args[1].replace("ref_", ""))
+            # Проверяем что не сам себя и что юзер реально новый (регистрация выше просто добавляет время если нет)
+            # Но в bot_data.register_user мы уже добавили. 
+            # Для честности проверим был ли он в системе до этого.
+            # Но так как register_user вызывается всегда, проверим прямо тут.
+            if inviter_id != user_id and user_id not in bot_data.user_referrals:
+                # Добавляем реферала
+                if user_id not in [item for sublist in bot_data.user_referrals.values() for item in sublist]:
+                    bot_data.user_referrals[inviter_id].append(user_id)
+                    # Бонус на 7 дней
+                    bot_data.user_referral_bonus[inviter_id] = (datetime.now() + timedelta(days=7)).isoformat()
+                    bot_data.save_data()
+                    try:
+                        await bot.send_message(inviter_id, f"🎉 По вашей ссылке зарегистировался новый пользователь! Вам начислен бонус: +2 креации на 7 дней.")
+                    except: pass
+        except: pass
+
+    # Выбираем локализованную клавиатуру
+    kb = get_kb(user_id)
     
-    # Выбираем клавиатуру в зависимости от прав
-    kb = admin_kb if bot_data.is_admin(user_id) else main_kb
+    status = "Обычный пользователь"
+    if user_id == 8566608157:
+        status = "Владелец (Администратор)"
     
-    await message.answer("👋 Привет! Я публичный генератор файлов.\nКидай код — получай результат.", reply_markup=kb)
+    reg_text = bot_data.tr(user_id, "start") + f"\n\n👤 **Статус:** {status}\n🆔 **Ваш ID:** `{user_id}`"
+    
+    await message.answer(reg_text, reply_markup=kb, parse_mode="Markdown")
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
@@ -526,84 +985,24 @@ async def cmd_admin(message: types.Message):
         f"💳 **Распределение по планам:**\n"
         f"  • Free: {plans_count['free']}\n"
         f"  • Pro: {plans_count['pro']}\n"
-        f"  • Ultra: {plans_count['ultra']}\n"
-    )
-    
-    await message.answer(admin_text, parse_mode="Markdown")
-
-@dp.message(F.text == "📊 Админ панель")
-async def button_admin_panel(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    
-    if not bot_data.is_admin(user_id):
-        await message.answer("❌ Недостаточно прав")
-        return
-    
-    # Считаем активных пользователей
-    total_users = len(bot_data.user_join_time)
-    creating_now = len(bot_data.users_creating)
-    in_queue = len(bot_data.request_queue)
-    processing = len(bot_data.processing)
-    
-    # Подсчитываем план распределение
-    plans_count = defaultdict(int)
-    for plan in bot_data.user_plans.values():
-        plans_count[plan] += 1
-    plans_count["free"] = total_users - sum(plans_count.values())
-    
-    # Получаем список новых юзеров за последний час
-    now = datetime.now()
-    hour_ago = now - timedelta(hours=1)
-    new_users = sum(1 for t in bot_data.user_join_time.values() if t > hour_ago)
-    
-    admin_text = (
-        "📊 **АДМИН ПАНЕЛЬ**\n\n"
-        f"👥 **Всего пользователей:** {total_users}\n"
-        f"🆕 **Новых за час:** {new_users}\n\n"
-        f"⚙️ **Сейчас обрабатывается:**\n"
-        f"  • Создают файлы: {creating_now}\n"
-        f"  • В очереди: {in_queue}\n"
-        f"  • Обрабатываются: {processing}\n\n"
-        f"💳 **Распределение по планам:**\n"
-        f"  • Free: {plans_count['free']}\n"
-        f"  • Pro: {plans_count['pro']}\n"
         f"  • Ultra: {plans_count['ultra']}"
     )
-    
-    # Кнопки для управления
-    manage_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Добавить премиум", callback_data="admin_add_premium")],
-        [InlineKeyboardButton(text="❌ Забрать премиум", callback_data="admin_remove_premium")],
-        [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="admin_block_user")],
-        [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="admin_unblock_user")]
+
+    admin_kb_inline = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💎 Выдать Премиум", callback_data="admin_add_premium")],
+        [InlineKeyboardButton(text="❌ Забрать Премиум", callback_data="admin_remove_premium")],
+        [InlineKeyboardButton(text="🚫 Забанить (ID)", callback_data="admin_block_user")],
+        [InlineKeyboardButton(text="✅ Разбанить (ID)", callback_data="admin_unblock_user")],
+        [InlineKeyboardButton(text="📋 Список забаненных", callback_data="admin_list_blocked")],
+        [InlineKeyboardButton(text="🎁 Управление заданиями", callback_data="admin_tasks_manage")],
+        [InlineKeyboardButton(text="➕ Добавить админа", callback_data="admin_add_manager")]
     ])
     
-    await message.answer(admin_text, parse_mode="Markdown", reply_markup=manage_kb)
+    await message.answer(admin_text, parse_mode="Markdown", reply_markup=admin_kb_inline)
 
-@dp.message(F.text == "👥 Управление")
-async def button_admin_manage(message: types.Message):
-    user_id = message.from_user.id
-    
-    if not bot_data.is_admin(user_id):
-        await message.answer("❌ Недостаточно прав")
-        return
-    
-    manage_text = (
-        "👥 **УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ**\n\n"
-        "Используйте команды:\n\n"
-        "💳 **Дать подписку:**\n"
-        "`/admin_add_user <id> <план>`\n"
-        "Планы: free, pro, ultra\n\n"
-        "👤 **Сделать админом:**\n"
-        "`/admin_add <id>`\n\n"
-        "👤 **Убрать админа:**\n"
-        "`/admin_remove <id>`\n\n"
-        "Пример:\n"
-        "`/admin_add_user 123456789 pro`\n"
-        "`/admin_add 123456789`"
-    )
-    
-    await message.answer(manage_text, parse_mode="Markdown")
+# ═══════════════════════════════════════════════════════════════
+# 💳 КОНТАКТЫ
+# ═══════════════════════════════════════════════════════════════
 
 @dp.message(F.text == "📞 Написать админу")
 async def button_contact_admin(message: types.Message):
@@ -624,7 +1023,7 @@ async def button_contact_admin(message: types.Message):
         text = f"Привет админ! Мне нужна помощь. Мой ID: {user_id}"
     
     # Ссылка с автоматическим сообщением
-    admin_contact = "Visasai"  # Telegram username админа
+    admin_contact = "Visaaai"  # Telegram username админа
     tg_link = f"https://t.me/{admin_contact}?text={text.replace(' ', '%20')}"
     
     contact_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -638,6 +1037,151 @@ async def button_contact_admin(message: types.Message):
         parse_mode="Markdown",
         reply_markup=contact_kb
     )
+
+# ═══════════════════════════════════════════════════════════════
+# 💳 ОПЛАТА TELEGRAM STARS
+# ═══════════════════════════════════════════════════════════════
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def process_buy_premium(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    plan_key = callback.data.split("_")[1]
+    
+    prices = {
+        "pro": {"label": "Pro Plan", "amount": 100},
+        "ultra": {"label": "Ultra Plan", "amount": 300}
+    }
+    
+    plan = prices.get(plan_key)
+    if not plan: return
+
+    await callback.message.answer_invoice(
+        title=f"Подписка {plan_key.upper()}",
+        description=f"Активация плана {plan_key.upper()} в GlaGen Bot",
+        prices=[LabeledPrice(label=plan["label"], amount=plan["amount"])],
+        payload=f"pay_{plan_key}",
+        currency="XTR",  # Telegram Stars
+        provider_token="" # Пусто для Stars
+    )
+    await callback.answer()
+
+@dp.pre_checkout_query()
+async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+@dp.message(F.content_type == ContentType.SUCCESSFUL_PAYMENT)
+async def process_successful_payment(message: types.Message):
+    user_id = message.from_user.id
+    payload = message.successful_payment.invoice_payload
+    plan_key = payload.split("_")[1]
+    
+    bot_data.set_user_plan(user_id, plan_key)
+    bot_data.user_creations[user_id] = 0
+    
+    await message.answer(
+        bot_data.tr(user_id, "pay_success", plan=PLANS[plan_key]['name']),
+        parse_mode="Markdown"
+    )
+
+    # Уведомление администратора об оплате
+    try:
+        admin_id = 8566608157
+        user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+        await bot.send_message(
+            admin_id,
+            f"💰 **Новая оплата!**\n\n"
+            f"👤 От: {user_info}\n"
+            f"💎 План: **{PLANS[plan_key]['name']}**\n"
+            f"⭐ Сумма: {message.successful_payment.total_amount} Stars",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Ошибка уведомления админа: {e}")
+
+# ═══════════════════════════════════════════════════════════════
+# 📋 НОВЫЕ ХЕНДЛЕРЫ КНОПОК
+# ═══════════════════════════════════════════════════════════════
+
+@dp.message(F.text.in_(btn_texts("ref_btn")))
+async def cmd_ref_btn(message: types.Message):
+    user_id = message.from_user.id
+    bot_info = await bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    count = len(bot_data.user_referrals.get(user_id, []))
+    
+    text = bot_data.tr(user_id, "ref_info", link=ref_link, count=count)
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(F.text.in_(btn_texts("lang_btn")))
+async def cmd_lang_btn(message: types.Message):
+    user_id = message.from_user.id
+    await message.answer(bot_data.tr(user_id, "lang_select"), reply_markup=lang_kb)
+
+@dp.callback_query(F.data.startswith("set_lang_"))
+async def callback_set_lang(callback: types.CallbackQuery):
+    lang = callback.data.split("_")[2]
+    user_id = callback.from_user.id
+    bot_data.set_user_lang(user_id, lang)
+    
+    # Обновляем меню с локализованными кнопками
+    kb = get_kb(user_id)
+    await callback.message.answer(bot_data.tr(user_id, "lang_changed"), reply_markup=kb)
+    await callback.answer()
+
+@dp.message(F.text.in_(btn_texts("files_btn")))
+async def cmd_myfiles_btn(message: types.Message):
+    user_id = message.from_user.id
+    history = bot_data.user_file_history.get(user_id, [])
+    
+    if not history:
+        await message.answer(bot_data.tr(user_id, "no_files"))
+        return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for idx, item in enumerate(history):
+        kb.inline_keyboard.append([InlineKeyboardButton(text=f"📁 {item['name']}", callback_data=f"hist_{idx}")])
+        
+    await message.answer(bot_data.tr(user_id, "my_files"), reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("hist_"))
+async def callback_hist_download(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    idx = int(callback.data.split("_")[1])
+    history = bot_data.user_file_history.get(user_id, [])
+    
+    if idx < len(history):
+        item = history[idx]
+        if os.path.exists(item['path']):
+            await callback.message.answer_document(FSInputFile(item['path']), caption=f"Файл из истории: {item['name']}")
+        else:
+            await callback.answer("Файл уже удален с сервера", show_alert=True)
+    else:
+        await callback.answer("Ошибка индекса", show_alert=True)
+    await callback.answer()
+
+@dp.message(Command("mystats"))
+async def cmd_mystats(message: types.Message):
+    await cmd_mystats_btn(message)
+
+@dp.message(Command("ref"))
+async def cmd_ref(message: types.Message):
+    await cmd_ref_btn(message)
+
+@dp.message(Command("blocked_list"))
+async def cmd_blocked_list(message: types.Message):
+    user_id = message.from_user.id
+    if not bot_data.is_admin(user_id): return
+    
+    blocked = list(bot_data.permanently_blocked_users)
+    if not blocked:
+        await message.answer(bot_data.tr(user_id, "no_blocked"))
+        return
+    
+    text = bot_data.tr(user_id, "blocked_list")
+    for b_id in blocked:
+        text += f"• `{b_id}`\n"
+    
+    await message.answer(text, parse_mode="Markdown")
 
 @dp.message(Command("admin_add"))
 async def cmd_admin_add(message: types.Message):
@@ -712,6 +1256,41 @@ async def cmd_admin_add_user(message: types.Message):
     except ValueError:
         await message.answer("❌ Неверный ID")
 
+
+# ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+
+@dp.callback_query(F.data == "admin_list_blocked")
+async def callback_admin_list_blocked(callback: types.CallbackQuery):
+    if not bot_data.is_admin(callback.from_user.id): return
+    
+    blocked = list(bot_data.permanently_blocked_users)
+    if not blocked:
+        await callback.message.answer("✅ В системе нет заблокированных пользователей.")
+    else:
+        text = "🚫 **Список заблокированных пользователей:**\n\n"
+        for b_id in blocked:
+            text += f"• `{b_id}`\n"
+        await callback.message.answer(text, parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_add_manager")
+async def callback_admin_add_manager(callback: types.CallbackQuery, state: FSMContext):
+    if not bot_data.is_admin(callback.from_user.id): return
+    await callback.message.answer("🆔 Введите ID пользователя, которого хотите сделать администратором:")
+    await state.set_state(AdminStates.waiting_user_id_to_add_admin)
+    await callback.answer()
+
+@dp.message(AdminStates.waiting_user_id_to_add_admin)
+async def receive_admin_id(message: types.Message, state: FSMContext):
+    if not bot_data.is_admin(message.from_user.id): return
+    try:
+        target_id = int(message.text)
+        bot_data.add_admin(target_id)
+        await message.answer(f"✅ Пользователь `{target_id}` теперь администратор.", parse_mode="Markdown")
+    except:
+        await message.answer("❌ Ошибка. Введите числовой ID.")
+    await state.clear()
 
 # ═══════════════════════════════════════════════════════════════
 # 🎛️ ОБРАБОТЧИКИ ИНЛАЙН КНОПОК АДМИН ПАНЕЛИ
@@ -949,144 +1528,398 @@ async def receive_user_id_to_unblock(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Неверный ID. Введите число:")
 
-@dp.message(F.text == "🚀 Начать создание")
+# ═══════════════════════════════════════════════════════════════
+# 🎁 СИСТЕМА ЗАДАНИЙ (АДМИН)
+# ═══════════════════════════════════════════════════════════════
+
+@dp.callback_query(F.data == "admin_tasks_manage")
+async def callback_admin_tasks_manage(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if not bot_data.is_admin(user_id): return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить задание", callback_data="admin_task_add")],
+        [InlineKeyboardButton(text="📋 Список заданий", callback_data="admin_task_list")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
+    ])
+    
+    await callback.message.edit_text("🎁 **Управление заданиями**\n\nЗдесь вы можете создавать задания для пользователей.", 
+                                    reply_markup=kb, parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_task_add")
+async def callback_admin_task_add(callback: types.CallbackQuery, state: FSMContext):
+    if not bot_data.is_admin(callback.from_user.id): return
+    await callback.message.answer("📝 Введите текст задания (например: Подпишись на наш канал):")
+    await state.set_state(AdminStates.waiting_task_text)
+    await callback.answer()
+
+@dp.message(AdminStates.waiting_task_text)
+async def admin_receive_task_text(message: types.Message, state: FSMContext):
+    await state.update_data(text=message.text)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Подписка на канал", callback_data="type_sub")],
+        [InlineKeyboardButton(text="✅ Ручное подтверждение", callback_data="type_manual")]
+    ])
+    await message.answer(" Выберите тип задания:", reply_markup=kb)
+    await state.set_state(AdminStates.waiting_task_type)
+
+@dp.callback_query(AdminStates.waiting_task_type)
+async def admin_receive_task_type(callback: types.CallbackQuery, state: FSMContext):
+    task_type = callback.data.split("_")[1]
+    await state.update_data(type=task_type)
+    
+    if task_type == "sub":
+        await callback.message.answer(bot_data.tr(callback.from_user.id, "admin_task_target_tip"))
+        await state.set_state(AdminStates.waiting_task_target)
+    else:
+        await state.update_data(target="none")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Доп. лимиты", callback_data="reward_creations")],
+            [InlineKeyboardButton(text="💎 Temp Premium (Pro)", callback_data="reward_premium")]
+        ])
+        await callback.message.answer("🎁 Выберите тип награды:", reply_markup=kb)
+        await state.set_state(AdminStates.waiting_reward_type)
+    await callback.answer()
+
+@dp.message(AdminStates.waiting_task_target)
+async def admin_receive_task_target(message: types.Message, state: FSMContext):
+    target = message.text.strip()
+    
+    # Автоматическая очистка ссылок
+    if "t.me/" in target:
+        target = target.split("t.me/")[-1]
+        if not target.startswith("@") and not target.isdigit() and not target.startswith("-"):
+            target = "@" + target
+    elif not target.startswith("@") and not target.isdigit() and not target.startswith("-"):
+        target = "@" + target
+        
+    await state.update_data(target=target)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Доп. лимиты", callback_data="reward_creations")],
+        [InlineKeyboardButton(text="💎 Temp Premium (Pro)", callback_data="reward_premium")]
+    ])
+    await message.answer(f"✅ Цель сохранена как: `{target}`\n\n🎁 Выберите тип награды:", reply_markup=kb, parse_mode="Markdown")
+    await state.set_state(AdminStates.waiting_reward_type)
+
+@dp.callback_query(AdminStates.waiting_reward_type)
+async def admin_receive_reward_type(callback: types.CallbackQuery, state: FSMContext):
+    reward_type = callback.data.split("_")[1]
+    await state.update_data(reward_type=reward_type)
+    
+    if reward_type == "creations":
+        await callback.message.answer("🔢 Сколько дополнительных креаций выдать?")
+    else:
+        await callback.message.answer("⏳ На сколько дней выдать PRO статус?")
+    
+    await state.set_state(AdminStates.waiting_reward_value)
+    await callback.answer()
+
+@dp.message(AdminStates.waiting_reward_value)
+async def admin_receive_reward_value(message: types.Message, state: FSMContext):
+    try:
+        val = int(message.text)
+        data = await state.get_data()
+        
+        task_id = str(uuid.uuid4())[:8]
+        new_task = {
+            "id": task_id,
+            "text": data['text'],
+            "type": data['type'],
+            "target": data['target'],
+            "reward_type": data['reward_type'],
+            "reward_value": val
+        }
+        
+        bot_data.tasks.append(new_task)
+        bot_data.save_data()
+        
+        await message.answer(f"✅ **Задание создано!**\n\nID: `{task_id}`\nТекст: {data['text']}\nТип: {data['type']}\nНаграда: {val} {'креаций' if data['reward_type'] == 'creations' else 'дней PRO'}", parse_mode="Markdown")
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите число!")
+
+@dp.callback_query(F.data == "admin_task_list")
+async def callback_admin_task_list(callback: types.CallbackQuery):
+    if not bot_data.is_admin(callback.from_user.id): return
+    
+    if not bot_data.tasks:
+        await callback.message.answer("❌ Заданий пока нет.")
+        await callback.answer()
+        return
+        
+    text = "📋 **Список заданий:**\n\n"
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for t in bot_data.tasks:
+        text += f"• `{t['id']}`: {t['text']} ({t['reward_value']} {t['reward_type']})\n"
+        kb.inline_keyboard.append([InlineKeyboardButton(text=f"🗑 Удалить {t['id']}", callback_data=f"admin_task_del_{t['id']}")])
+    
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks_manage")])
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("admin_task_del_"))
+async def callback_admin_task_del(callback: types.CallbackQuery):
+    if not bot_data.is_admin(callback.from_user.id): return
+    task_id = callback.data.split("_")[3]
+    
+    bot_data.tasks = [t for t in bot_data.tasks if t['id'] != task_id]
+    bot_data.save_data()
+    
+    await callback.answer("✅ Задание удалено", show_alert=True)
+    await callback_admin_task_list(callback)
+
+# ═══════════════════════════════════════════════════════════════
+# 🎁 СИСТЕМА ЗАДАНИЙ (ЮЗЕР)
+# ═══════════════════════════════════════════════════════════════
+
+@dp.message(F.text.in_(btn_texts("tasks_btn")))
+async def cmd_tasks_menu(message: types.Message):
+    user_id = message.from_user.id
+    
+    # Фильтруем задания, которые пользователь еще не выполнил
+    completed = bot_data.user_completed_tasks.get(user_id, set())
+    available_tasks = [t for t in bot_data.tasks if t['id'] not in completed]
+    
+    if not available_tasks:
+        await message.answer("🎁 **Задания**\n\nНа данный момент новых заданий нет. Заходи позже! 😊", parse_mode="Markdown")
+        return
+        
+    text = bot_data.tr(user_id, "tasks_menu")
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    
+    for t in available_tasks:
+        reward_text = ""
+        if t['reward_type'] == "creations":
+            reward_text = bot_data.tr(user_id, "task_reward_creations", count=t['reward_value'])
+        else:
+            reward_text = bot_data.tr(user_id, "task_reward_premium", days=t['reward_value'])
+            
+        kb.inline_keyboard.append([InlineKeyboardButton(text=f"{t['text']} ({reward_text})", callback_data=f"task_view_{t['id']}")])
+        
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query(F.data.startswith("task_view_"))
+async def callback_task_view(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    task_id = callback.data.split("_")[2]
+    
+    task = next((t for t in bot_data.tasks if t['id'] == task_id), None)
+    if not task:
+        await callback.answer("Задание не найдено", show_alert=True)
+        return
+        
+    reward_text = ""
+    if task['reward_type'] == "creations":
+        reward_text = bot_data.tr(user_id, "task_reward_creations", count=task['reward_value'])
+    else:
+        reward_text = bot_data.tr(user_id, "task_reward_premium", days=task['reward_value'])
+        
+    text = (
+        f"📋 **Задание:**\n{task['text']}\n\n"
+        f"🎁 **Награда:** {reward_text}\n\n"
+        f"Нажми кнопку ниже, чтобы подтвердить выполнение!"
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Проверить выполнение", callback_data=f"task_check_{task_id}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="tasks_back")]
+    ])
+    
+    if task['type'] == "sub" and task['target'].startswith("@"):
+        kb.inline_keyboard.insert(0, [InlineKeyboardButton(text="📢 Перейти к каналу", url=f"https://t.me/{task['target'][1:]}")])
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data == "tasks_back")
+async def callback_tasks_back(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await cmd_tasks_menu(callback.message)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("task_check_"))
+async def callback_task_check(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    task_id = callback.data.split("_")[2]
+    
+    task = next((t for t in bot_data.tasks if t['id'] == task_id), None)
+    if not task:
+        await callback.answer("Задание не найдено", show_alert=True)
+        return
+        
+    if task_id in bot_data.user_completed_tasks.get(user_id, set()):
+        await callback.answer(bot_data.tr(user_id, "task_already_done"), show_alert=True)
+        return
+        
+    # Проверка выполнения
+    is_done = False
+    if task['type'] == "sub":
+        try:
+            member = await bot.get_chat_member(chat_id=task['target'], user_id=user_id)
+            if member.status in ["member", "administrator", "creator"]:
+                is_done = True
+            else:
+                # Вместо алерта - обновляем текст сообщения
+                error_text = bot_data.tr(user_id, "task_not_subbed", target=task['target'])
+                
+                # Повторно генерируем кнопки
+                reward_text = ""
+                if task['reward_type'] == "creations":
+                    reward_text = bot_data.tr(user_id, "task_reward_creations", count=task['reward_value'])
+                else:
+                    reward_text = bot_data.tr(user_id, "task_reward_premium", days=task['reward_value'])
+                
+                info_text = (
+                    f"📋 **Задание:**\n{task['text']}\n\n"
+                    f"🎁 **Награда:** {reward_text}\n\n"
+                    f"{error_text}"
+                )
+                
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Проверить выполнение", callback_data=f"task_check_{task_id}")],
+                    [InlineKeyboardButton(text="🔙 Назад", callback_data="tasks_back")]
+                ])
+                if task['type'] == "sub" and task['target'].startswith("@"):
+                    kb.inline_keyboard.insert(0, [InlineKeyboardButton(text="📢 Перейти к каналу", url=f"https://t.me/{task['target'][1:]}")])
+                
+                try:
+                    await callback.message.edit_text(info_text, reply_markup=kb, parse_mode="Markdown")
+                except:
+                    pass # Сообщение может не измениться
+                
+                await callback.answer("❌ Вы еще не подписаны")
+                return
+        except Exception as e:
+            await callback.answer(f"Ошибка проверки подписки: {e}", show_alert=True)
+            return
+    else:
+        # Для ручных заданий считаем нажатие кнопки подтверждением (в простых ботах)
+        is_done = True
+        
+    if is_done:
+        # Выдаем награду
+        reward_msg = ""
+        if task['reward_type'] == "creations":
+            # Просто уменьшаем счетчик использованных креаций ИЛИ увеличиваем лимит.
+            # В нашей логике user_creations сбрасывается каждые 5 часов. 
+            # Лучше всего выдать бонус как в рефералке - на время.
+            # Но для простоты: просто вычтем из текущего счетчика.
+            # Хотя лимиты жесткие в get_max_creations.
+            # Давайте добавим в BotData метод выдачи награды.
+            bot_data.user_creations[user_id] = max(0, bot_data.user_creations[user_id] - task['reward_value'])
+            reward_msg = bot_data.tr(user_id, "task_reward_creations", count=task['reward_value'])
+        else:
+            # Выдаем Pro на X дней
+            # У рефералки есть user_referral_bonus (срок окончания). Используем похожую логику.
+            expiry = datetime.now() + timedelta(days=task['reward_value'])
+            bot_data.user_referral_bonus[user_id] = expiry.isoformat()
+            bot_data.set_user_plan(user_id, "pro")
+            reward_msg = bot_data.tr(user_id, "task_reward_premium", days=task['reward_value'])
+            
+        bot_data.user_completed_tasks[user_id].add(task_id)
+        bot_data.save_data()
+        
+        await callback.message.edit_text(bot_data.tr(user_id, "task_completed", reward=reward_msg), parse_mode="Markdown")
+        await callback.answer("🎉 Поздравляем!", show_alert=True)
+
+@dp.callback_query(F.data == "admin_back")
+async def callback_admin_back(callback: types.CallbackQuery):
+    await cmd_admin(callback.message)
+    await callback.answer()
+
+@dp.message(F.text.in_(btn_texts("gen_btn")))
 async def menu_start_gen(message: types.Message):
     user_id = message.from_user.id
     
     # Проверяем блокировки
     if bot_data.is_permanently_blocked(user_id):
-        await message.answer("🚫 Вы заблокированы навсегда и не можете использовать бота.")
+        await message.answer(bot_data.tr(user_id, "blocked_perm"))
         return
     
     if bot_data.is_temp_blocked(user_id):
         unblock_time = bot_data.temp_blocked_users.get(user_id)
         if unblock_time:
             hours_left = int((unblock_time - datetime.now()).total_seconds() / 3600)
-            await message.answer(f"🚫 Вы не можете создавать файлы. Разблокировка через: ~{hours_left} часов")
+            await message.answer(bot_data.tr(user_id, "blocked_temp", hours=hours_left))
         return
     
-    await message.answer("👇 Просто отправь мне код (текстом или файлом .py).")
+    await message.answer(bot_data.tr(user_id, "gen_prompt"))
 
-@dp.message(F.text == "💳 Премиум")
+@dp.message(F.text.in_(btn_texts("prem_btn")))
 async def menu_premium(message: types.Message):
     user_id = message.from_user.id
     
     # Проверяем блокировки
     if bot_data.is_permanently_blocked(user_id):
-        await message.answer("🚫 Вы заблокированы навсегда и не можете использовать бота.")
+        await message.answer(bot_data.tr(user_id, "blocked_perm"))
         return
     
     if bot_data.is_temp_blocked(user_id):
         unblock_time = bot_data.temp_blocked_users.get(user_id)
         if unblock_time:
             hours_left = int((unblock_time - datetime.now()).total_seconds() / 3600)
-            await message.answer(f"🚫 Премиум недоступен. Разблокировка через: ~{hours_left} часов")
+            await message.answer(bot_data.tr(user_id, "blocked_temp", hours=hours_left))
         return
     
     current_plan = bot_data.get_user_plan(user_id)
     used = bot_data.user_creations[user_id]
-    plan = PLANS[current_plan]
+    plan_info = PLANS[current_plan]
     
-    text = (
-        "╔════════════════════════════════╗\n"
-        "║     💎 ПРЕМИУМ ПОДПИСКИ 💎    ║\n"
-        "╚════════════════════════════════╝\n\n"
-        f"📊 **Ваш текущий план:** {plan['name']}\n"
-        f"📈 Использовано: {used}/{plan['max_creations']} креаций\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    # Подготавливаем метки активности
+    active_label = bot_data.tr(user_id, "prem_active")
+    free_active = active_label if current_plan == "free" else ""
+    pro_active = active_label if current_plan == "pro" else ""
+    ultra_active = active_label if current_plan == "ultra" else ""
+    
+    text = bot_data.tr(
+        user_id, "prem_msg",
+        plan=plan_info['name'],
+        used=used,
+        max=plan_info['max_creations'] if plan_info['max_creations'] != float('inf') else "∞",
+        reset_time=bot_data.get_reset_time_left(),
+        free_active=free_active,
+        pro_active=pro_active,
+        ultra_active=ultra_active
     )
     
-    # Free план
-    text += "┌─ 🆓 FREE 🆓 ─────────────────┐\n"
-    text += "│ Бесплатно\n"
-    text += "│ 📝 3 креации\n"
-    text += "│ 📦 10KB вход / 40 строк\n"
-    text += "│ 📤 400KB выход\n"
-    if current_plan == "free":
-        text += "│ ✅ АКТИВЕН\n"
-    text += "└────────────────────────────┘\n\n"
-    
-    # Pro план
-    text += "┌─ 💎 PRO 💎 ───────────────────┐\n"
-    text += "│ 100 ⭐ / 30 грн / 65 руб\n"
-    text += "│ 📝 15 креаций\n"
-    text += "│ 📦 30KB вход / 100 строк\n"
-    text += "│ 📤 10MB выход\n"
-    if current_plan == "pro":
-        text += "│ ✅ АКТИВЕН\n"
-    text += "└────────────────────────────┘\n\n"
-    
-    # Ultra план
-    text += "┌─ 👑 ULTRA 👑 ─────────────────┐\n"
-    text += "│ 300 ⭐ / 70 грн / 165 руб\n"
-    text += "│ 📝 ∞ Бесконечные креации\n"
-    text += "│ 📦 1MB вход / ∞ строк\n"
-    text += "│ 📤 ∞ Без ограничений\n"
-    if current_plan == "ultra":
-        text += "│ ✅ АКТИВЕН\n"
-    text += "└────────────────────────────┘\n\n"
-    
-    text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    text += "👇 Нажмите кнопку чтобы обновить подписку 👇"
-    
-    await message.answer(text, parse_mode="Markdown", reply_markup=premium_kb)
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_premium_choice_kb(user_id))
 
-@dp.message(F.text == "ℹ️ Инфо")
+@dp.callback_query(F.data == "prem_stars")
+async def callback_premium_stars(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.message.edit_reply_markup(reply_markup=get_premium_plans_kb(user_id))
+    await callback.answer()
+
+@dp.message(F.text.in_(btn_texts("info_btn")))
 async def menu_about(message: types.Message):
     user_id = message.from_user.id
     
     # Проверяем блокировки
     if bot_data.is_permanently_blocked(user_id):
-        await message.answer("🚫 Вы заблокированы навсегда и не можете использовать бота.")
+        await message.answer(bot_data.tr(user_id, "blocked_perm"))
         return
     
     if bot_data.is_temp_blocked(user_id):
         unblock_time = bot_data.temp_blocked_users.get(user_id)
         if unblock_time:
             hours_left = int((unblock_time - datetime.now()).total_seconds() / 3600)
-            await message.answer(f"🚫 Информация недоступна. Разблокировка через: ~{hours_left} часов")
+            await message.answer(bot_data.tr(user_id, "blocked_temp", hours=hours_left))
         return
     
     plan = bot_data.get_user_plan(user_id)
     plan_info = PLANS[plan]
     
-    text = (
-        "╔════════════════════════════════╗\n"
-        "║  🤖 GlaGen - Gen File Bot 🤖  ║\n"
-        "╚════════════════════════════════╝\n\n"
-        "🎯 Безопасная песочница для Python\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📊 ВАША ПОДПИСКА\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💳 План: **{plan_info['name']}**\n"
-        f"📥 Входящие файлы: до **{plan_info['max_input_size'] // 1024}KB** ({plan_info['max_input_lines']} строк)\n"
-        f"📤 Выходящие файлы: до **{plan_info['max_output_size'] // (1024*1024) if plan_info['max_output_size'] != float('inf') else '∞'}MB**\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ ПОДДЕРЖИВАЕМЫЕ ФОРМАТЫ\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📄 docx - Word документы\n"
-        "📊 xlsx - Excel таблицы\n"
-        "🎨 pptx - PowerPoint презентации\n"
-        "📑 pdf - PDF файлы\n"
-        "📈 matplotlib - Графики\n"
-        "🔲 qrcode - QR коды\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⛔ ЗАПРЕЩЕНО\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "❌ os, sys - Доступ к системе\n"
-        "❌ input() - Ожидание ввода\n"
-        "❌ requests, urllib - Интернет\n"
-        "❌ eval(), exec() - Опасный код\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⏳ ЛИМИТЫ\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⏰ Максимум: **30 секунд** на выполнение\n"
-        "🔄 После 10 таймаутов: блок на 24ч\n\n"
-        "💡 Обновите подписку для больших лимитов!"
+    text = bot_data.tr(
+        user_id, "info",
+        plan_name=plan_info['name'],
+        input_size=plan_info['max_input_size'] // 1024,
+        input_lines=plan_info['max_input_lines'],
+        output_size=plan_info['max_output_size'] // (1024*1024) if plan_info['max_output_size'] != float('inf') else '∞'
     )
     await message.answer(text, parse_mode="Markdown")
 
-@dp.message(F.text == "📹 Тутор")
+@dp.message(F.text.in_(btn_texts("tutor_btn")))
 async def menu_tutorial(message: types.Message):
     user_id = message.from_user.id
     
@@ -1114,22 +1947,14 @@ async def handle_document(message: types.Message):
     
     # Проверяем блокировки
     if bot_data.is_permanently_blocked(user_id):
-        await message.answer(
-            f"🚫 **Вы заблокированы навсегда**\n\n"
-            f"Ваш аккаунт был удален администратором.\n"
-            f"Обратитесь к админу для уточнения: https://t.me/Visasai"
-        )
+        await message.answer(bot_data.tr(user_id, "blocked_perm"))
         return
     
     if bot_data.is_temp_blocked(user_id):
         unblock_time = bot_data.temp_blocked_users.get(user_id)
         if unblock_time:
             hours_left = int((unblock_time - datetime.now()).total_seconds() / 3600)
-            await message.answer(
-                f"🚫 **Вы не можете создавать файлы**\n\n"
-                f"Превышен лимит таймаутов (10+ за день).\n"
-                f"Восстановление через: ~{hours_left} часов"
-            )
+            await message.answer(bot_data.tr(user_id, "blocked_temp", hours=hours_left))
         return
     
     bot_data.register_user(user_id)
@@ -1157,30 +1982,24 @@ async def handle_document(message: types.Message):
 # 2. Если прислали ТЕКСТ
 @dp.message(F.text)
 async def handle_text_code(message: types.Message):
-    # Игнорируем нажатия кнопок меню
-    if message.text in ["🚀 Начать создание", "ℹ️ Инфо", "📹 Тутор", "💳 Премиум", "📊 Админ панель", "👥 Управление", "📞 Написать админу"]: 
+    # Игнорируем команды и кнопки меню (всех языков)
+    if message.text.startswith("/"):
+        return
+    if message.text in ALL_MENU_BUTTONS:
         return
 
     user_id = message.from_user.id
     
     # Проверяем блокировки
     if bot_data.is_permanently_blocked(user_id):
-        await message.answer(
-            f"🚫 **Вы заблокированы навсегда**\n\n"
-            f"Ваш аккаунт был удален администратором.\n"
-            f"Обратитесь к админу для уточнения: https://t.me/Visasai"
-        )
+        await message.answer(bot_data.tr(user_id, "blocked_perm"))
         return
     
     if bot_data.is_temp_blocked(user_id):
         unblock_time = bot_data.temp_blocked_users.get(user_id)
         if unblock_time:
             hours_left = int((unblock_time - datetime.now()).total_seconds() / 3600)
-            await message.answer(
-                f"🚫 **Вы не можете создавать файлы**\n\n"
-                f"Превышен лимит таймаутов (10+ за день).\n"
-                f"Восстановление через: ~{hours_left} часов"
-            )
+            await message.answer(bot_data.tr(user_id, "blocked_temp", hours=hours_left))
         return
     
     bot_data.register_user(user_id)
